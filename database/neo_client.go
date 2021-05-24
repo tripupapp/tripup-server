@@ -1,18 +1,18 @@
 package database
 
 import (
-    "errors"
-    "fmt"
-    "io"
-    "log"
-    "os"
-    "strings"
-    "sync"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"strings"
+	"sync"
 
-    "github.com/google/uuid"
-    bolt "github.com/johnnadratowski/golang-neo4j-bolt-driver"
+	"github.com/google/uuid"
+	bolt "github.com/johnnadratowski/golang-neo4j-bolt-driver"
 
-    "bitbucket.org/tripup/server/auth"
+	"bitbucket.org/tripup/server/auth"
 )
 
 var debugLogger *log.Logger = log.New(os.Stdout, "[DEBUG] NeoLog: ", log.LstdFlags | log.Lshortfile)
@@ -60,7 +60,7 @@ func (neo *Neo4j) Connect() {
     }
 }
 
-func (neo *Neo4j) CreateUser(id string, uuid string, authProviders auth.AuthProviders, publickey string, privatekey string) error {
+func (neo *Neo4j) CreateUser(id string, uuid string, authProviders auth.AuthProviders, publickey string, privatekey string, schemaVersion string) error {
     conn, err := neo.driverPool.OpenPool()
     if err != nil {
         return err
@@ -68,7 +68,7 @@ func (neo *Neo4j) CreateUser(id string, uuid string, authProviders auth.AuthProv
     defer conn.Close()
 
     stmt, err := conn.PrepareNeo(
-        "CREATE (user:User { uuid: {uuid}, publicKey: {publickey}, privateKey: {privatekey}, id: {id}, number: {number}, email: {email}, appleid: {appleid} }) " +
+        "CREATE (user:User { uuid: {uuid}, publicKey: {publickey}, privateKey: {privatekey}, id: {id}, number: {number}, email: {email}, appleid: {appleid}, schemaVersion: {schemaVersion} }) " +
         "RETURN user.uuid")
     if err != nil {
         return err
@@ -83,6 +83,7 @@ func (neo *Neo4j) CreateUser(id string, uuid string, authProviders auth.AuthProv
         "appleid": nil,
         "publickey": publickey,
         "privatekey": privatekey,
+        "schemaVersion": schemaVersion,
     }
 
     if len(authProviders.PhoneNumber) != 0 {
@@ -391,7 +392,7 @@ func (neo *Neo4j) GetGroups(id string) (map[string]map[string]interface{}, error
     return data, nil
 }
 
-func (neo *Neo4j) CreateAsset(id string, assetid string, remotepath string, createdate *string, location *string, originaluti *string, pixelwidth int, pixelheight int, md5 string, key string) error {
+func (neo *Neo4j) CreateAsset(id string, assetid string, remotepath string, createdate *string, location *string, originaluti *string, pixelwidth int, pixelheight int, md5 string, key string, remotepathorig *string, totalsize *uint64) error {
     conn, err := neo.driverPool.OpenPool()
     if err != nil {
         return err
@@ -401,7 +402,7 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, remotepath string, crea
     stmt, err := conn.PrepareNeo(
         "MATCH (user:User { id: {id} }) " +
         "MERGE (user) <- [memory:MEMORY] - (image:Image { uuid: {assetid} }) " +
-        "ON CREATE SET memory.key = {key}, image.remotepath = {remotepath}, image.createdate = {createdate}, image.location = {location}, image.originaluti = {originaluti}, image.pixelwidth = {pixelwidth}, image.pixelheight = {pixelheight}, image.md5 = {md5} ")
+        "ON CREATE SET memory.key = {key}, image.remotepath = {remotepath}, image.remotepathorig = {remotepathorig}, image.createdate = {createdate}, image.location = {location}, image.originaluti = {originaluti}, image.pixelwidth = {pixelwidth}, image.pixelheight = {pixelheight}, image.md5 = {md5}, image.totalsize = {totalsize} ")
     if err != nil {
         return err
     }
@@ -412,13 +413,15 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, remotepath string, crea
         "id": id,
         "assetid": assetid,
         "remotepath": remotepath,
+        "remotepathorig": nil,
         "createdate": nil,
         "location": nil,
         "originaluti": nil,
         "md5": md5,
         "pixelwidth": pixelwidth,
         "pixelheight": pixelheight,
-        "key": key }
+        "key": key,
+        "totalsize": nil }
     if createdate != nil {
         input["createdate"] = *createdate
     }
@@ -427,6 +430,12 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, remotepath string, crea
     }
     if originaluti != nil {
         input["originaluti"] = *originaluti
+    }
+    if remotepathorig != nil {
+        input["remotepathorig"] = *remotepathorig
+    }
+    if totalsize != nil {
+        input["totalsize"] = *totalsize
     }
 
     result, err := stmt.ExecNeo(input)

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,12 +22,14 @@ import (
 
 	"bitbucket.org/tripup/server/auth"
 	"bitbucket.org/tripup/server/database"
+	"bitbucket.org/tripup/server/notification"
 	"bitbucket.org/tripup/server/storage"
 )
 
 var logger *log.Logger = log.New(os.Stdout, "[INFO] ServerLog: ", log.LstdFlags)
 var errLogger *log.Logger = log.New(os.Stderr, "[ERROR] ServerLog: ", log.LstdFlags | log.Lshortfile)
 var storageBackend = storage.NewS3Backend()
+var notificationService notification.NotificationService
 
 type invalidArgError struct {
     argNumber int
@@ -47,6 +51,17 @@ func validateArgsNotZero(strings []string) error {
 func main() {
     quit := make(chan os.Signal)                        // set up a channel called 'quit' which takes os signals
     signal.Notify(quit, os.Interrupt, syscall.SIGTERM)  // capture SIGINT from CLI and SIGTERM from OS, redirect to 'quit' channel
+
+    // initialise notification service
+    oneSignalAppID, exists := os.LookupEnv("ONESIGNAL_APPID")
+    if !exists {
+        errLogger.Panicln("ONESIGNAL_APPID not set")
+    }
+    oneSignalAPIKey, exists := os.LookupEnv("ONESIGNAL_APIKEY")
+    if !exists {
+        errLogger.Panicln("ONESIGNAL_APIKEY not set")
+    }
+    notificationService = notification.OneSignal{AppID: oneSignalAppID, APIKey: oneSignalAPIKey}
 
     // initialise neo4j database connection
     neoDB := database.Instance()
@@ -83,7 +98,8 @@ func main() {
         subrouter.Use(middleware.Throttle(throttle))    // max 10 requests processed at same time, backlog others
         subrouter.Get("/", apiGetAssets)
         subrouter.Post("/", apiCreateAsset)
-        subrouter.Patch("/", apiDeleteAssets)
+        subrouter.Patch("/", apiPatchAssets)
+        subrouter.Patch("/original", apiPatchAssetsRemoteOriginalPaths)
         subrouter.Put("/{assetID}/original", apiUpdateOriginalRemote)
     })
     router.Route("/groups", func(subrouter chi.Router) {
@@ -186,6 +202,14 @@ func apiCreateAsset(response http.ResponseWriter, request *http.Request) {
     createAsset(response, request, database.Instance())
 }
 
+func apiPatchAssets(response http.ResponseWriter, request *http.Request) {
+    patchAssets(response, request, database.Instance())
+}
+
+func apiPatchAssetsRemoteOriginalPaths(response http.ResponseWriter, request *http.Request) {
+    patchAssetsRemoteOriginalPaths(response, request, database.Instance())
+}
+
 func apiUpdateOriginalRemote(response http.ResponseWriter, request *http.Request) {
     updateImageRemotePathOriginal(response, request, database.Instance())
 }
@@ -212,10 +236,6 @@ func apiAmendGroupSharedAssets(response http.ResponseWriter, request *http.Reque
 
 func APISetFavourite(response http.ResponseWriter, request *http.Request) {
     SetFavourite(response, request, database.Instance())
-}
-
-func apiDeleteAssets(response http.ResponseWriter, request *http.Request) {
-    deleteAssets(response, request, database.Instance())
 }
 
 func apiLeaveGroup(response http.ResponseWriter, request *http.Request) {
@@ -307,7 +327,7 @@ func createUser(response http.ResponseWriter, request *http.Request, neoDB *data
     userid := uuid.New()
     // TODO: check user id not in use
 
-    err = neoDB.CreateUser(token.UID, userid.String(), authProviders, user.Publickey, user.Privatekey)
+    err = neoDB.CreateUser(token.UID, userid.String(), authProviders, user.Publickey, user.Privatekey, "1")
     if err != nil {
         response.WriteHeader(http.StatusInternalServerError)
         errLogger.Println(err.Error())
@@ -435,6 +455,21 @@ func joinGroup(response http.ResponseWriter, request *http.Request, neoDB *datab
         errLogger.Println(err.Error())
     } else {
         response.WriteHeader(http.StatusCreated)
+
+        // notify users
+        var userIDs []string
+        groupUsers, err := neoDB.GetUsersInGroup(token.UID, groupID)
+        if err == io.EOF {
+            return
+        }
+        for userID := range groupUsers {
+            userIDs = append(userIDs, userID)
+        }
+        err = notificationService.Notify(userIDs, notification.UserJoinedGroup, &map[string]string{"groupid": groupID})
+        if err != nil {
+            errLogger.Println(err.Error())
+            return
+        }
     }
 }
 
@@ -515,6 +550,17 @@ func addUsersToGroup(response http.ResponseWriter, request *http.Request, neoDB 
         errLogger.Println(err.Error())
     } else {
         response.WriteHeader(http.StatusOK)
+
+        // notify users
+        var userIDs []string
+        for _, user := range payload.Users {
+            userIDs = append(userIDs, user["uuid"])
+        }
+        err = notificationService.Notify(userIDs, notification.GroupInvite, nil)
+        if err != nil {
+            errLogger.Println(err.Error())
+            return
+        }
     }
 }
 
@@ -620,6 +666,19 @@ func getGroupUsers(response http.ResponseWriter, request *http.Request, neoDB *d
     response.Write(dataJSON)
 }
 
+type asset struct {
+    AssetID string
+    RemotePath string
+    RemotePathOrig *string
+    CreateDate *string
+    Location *string
+    OriginalUTI *string
+    PixelWidth int
+    PixelHeight int
+    Md5 string
+    Key string
+}
+
 func createAsset(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
     defer GenericErrorHandler(response)
 
@@ -630,41 +689,215 @@ func createAsset(response http.ResponseWriter, request *http.Request, neoDB *dat
         return
     }
 
-    var asset struct {
-        AssetID string
-        RemotePath string
-        CreateDate *string
-        Location *string
-        OriginalUTI *string
-        PixelWidth int
-        PixelHeight int
-        Md5 string
-        Key string
-    }
+    var asset asset
     if err := json.NewDecoder(request.Body).Decode(&asset); err != nil {
         response.WriteHeader(http.StatusBadRequest)
         response.Write([]byte("Unable to decode JSON payload"))
         return
     }
 
-    if err := validateArgsNotZero([]string{asset.AssetID, asset.RemotePath, asset.Key}); err != nil {
-        response.WriteHeader(http.StatusBadRequest)
-        response.Write([]byte(err.Error()))
+    httpStatus, err, totalsize := createSingleAsset(asset, token.UID, neoDB)
+    if err != nil {
+        response.WriteHeader(httpStatus)
+        if httpStatus == http.StatusInternalServerError {
+            errLogger.Println(err.Error())
+        } else {
+            response.Write([]byte(err.Error()))
+        }
         return
+    }
+
+    response.WriteHeader(http.StatusCreated)
+    if totalsize != nil {
+        b := make([]byte, 8)
+        binary.LittleEndian.PutUint64(b, *totalsize)
+        response.Write(b)
+    }
+}
+
+func patchAssets(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
+    defer GenericErrorHandler(response)
+
+    token, ok := firebaseauth.AuthToken(request.Context())
+    if !ok {
+        response.WriteHeader(http.StatusUnauthorized)
+        response.Write([]byte("Unable to extract token from request context"))
+        return
+    }
+
+    var payload struct {
+        CREATE []asset  `json:",omitempty"`
+        DELETE []string `json:",omitempty"`
+    }
+    if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+        response.WriteHeader(http.StatusBadRequest)
+        response.Write([]byte("Unable to decode JSON payload"))
+        return
+    }
+
+    var httpStatus int
+    var err error
+    var resultData = make(map[string]int)
+
+    if len(payload.CREATE) != 0 {
+        for _, asset := range payload.CREATE {
+            var totalsize *uint64
+            httpStatus, err, totalsize = createSingleAsset(asset, token.UID, neoDB)
+            if err != nil {
+                break
+            }
+            if totalsize != nil {
+                resultData[asset.AssetID] = int(*totalsize)
+            }
+        }
+    }
+
+    if err != nil {
+        response.WriteHeader(httpStatus)
+        if httpStatus == http.StatusInternalServerError {
+            errLogger.Println(err.Error())
+        } else {
+            response.Write([]byte(err.Error()))
+        }
+        return
+    }
+
+    if len(payload.DELETE) != 0 {
+        httpStatus, err = deleteAssets(payload.DELETE, token.UID, neoDB)
+    }
+
+    if err != nil {
+        response.WriteHeader(httpStatus)
+        if httpStatus == http.StatusInternalServerError {
+            errLogger.Println(err.Error())
+        } else {
+            response.Write([]byte(err.Error()))
+        }
+        return
+    }
+
+    if len(resultData) == 0 {
+        response.WriteHeader(http.StatusOK)
+    } else {
+        dataJSON, err := json.Marshal(resultData)
+        if err != nil {
+            response.WriteHeader(http.StatusInternalServerError)
+            errLogger.Println(err.Error())
+        } else {
+            response.WriteHeader(http.StatusOK)
+            response.Write(dataJSON)
+        }
+    }
+}
+
+func createSingleAsset(asset asset, uid string, neoDB *database.Neo4j) (int, error, *uint64) {
+    if err := validateArgsNotZero([]string{asset.AssetID, asset.RemotePath, asset.Key}); err != nil {
+        return http.StatusBadRequest, err, nil
     }
 
     if asset.PixelWidth == 0 || asset.PixelHeight == 0 {
-        response.WriteHeader(http.StatusBadRequest)
-        response.Write([]byte("One of the Int args has a value of 0"))
+        return http.StatusBadRequest, errors.New("One of the Int args has a value of 0"), nil
+    }
+
+    var totalsize *uint64
+    if asset.RemotePathOrig != nil {
+        originalLength, lowLength, err := storageBackend.Filesizes(*asset.RemotePathOrig)
+        // 128 KB minimum
+        if originalLength < 131072 {
+            originalLength = 131072
+        }
+        if lowLength < 131072 {
+            lowLength = 131072
+        }
+        if err != nil {
+            return http.StatusInternalServerError, err, nil
+        }
+        size := originalLength + lowLength
+        totalsize = &size
+    }
+
+    err := neoDB.CreateAsset(uid, asset.AssetID, asset.RemotePath, asset.CreateDate, asset.Location, asset.OriginalUTI, asset.PixelWidth, asset.PixelHeight, asset.Md5, asset.Key, asset.RemotePathOrig, totalsize)
+    if err != nil {
+        return http.StatusInternalServerError, err, nil
+    }
+    return http.StatusCreated, nil, totalsize
+}
+
+func deleteAssets(assetIDs []string, uid string, neoDB *database.Neo4j) (int, error) {
+    if len(assetIDs) == 0 {
+        return http.StatusBadRequest, errors.New("AssetIDs is empty")
+    }
+
+    objectsToDelete, err := neoDB.DeleteAssets(uid, assetIDs)
+    if err != nil {
+        return http.StatusInternalServerError, err
+    }
+
+    err = storageBackend.Delete(*objectsToDelete)
+    if err != nil {
+        return http.StatusInternalServerError, err
+    }
+
+    return http.StatusOK, nil
+}
+
+func patchAssetsRemoteOriginalPaths(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
+    defer GenericErrorHandler(response)
+
+    token, ok := firebaseauth.AuthToken(request.Context())
+    if !ok {
+        response.WriteHeader(http.StatusUnauthorized)
+        response.Write([]byte("Unable to extract token from request context"))
         return
     }
 
-    err := neoDB.CreateAsset(token.UID, asset.AssetID, asset.RemotePath, asset.CreateDate, asset.Location, asset.OriginalUTI, asset.PixelWidth, asset.PixelHeight, asset.Md5, asset.Key)
+    var payload map[string]string
+    if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+        errLogger.Panicln(err)
+    }
+
+    if len(payload) == 0 {
+        response.WriteHeader(http.StatusBadRequest)
+        response.Write([]byte("payload is empty"))
+        return
+    }
+
+    var err error
+    var resultData = make(map[string]int)
+    for assetID, remotePathOriginal := range payload {
+        originalLength, lowLength, err := storageBackend.Filesizes(remotePathOriginal)
+        // 128 KB minimum
+        if originalLength < 131072 {
+            originalLength = 131072
+        }
+        if lowLength < 131072 {
+            lowLength = 131072
+        }
+        if err != nil {
+            break
+        }
+
+        err = neoDB.UpdatePhotoNodeOriginal(token.UID, assetID, remotePathOriginal, originalLength + lowLength)
+        if err != nil {
+            break
+        }
+
+        resultData[assetID] = int(originalLength) + int(lowLength)
+    }
+
+    if err != nil {
+        response.WriteHeader(http.StatusInternalServerError)
+        errLogger.Println(err.Error())
+        return
+    }
+
+    dataJSON, err := json.Marshal(resultData)
     if err != nil {
         response.WriteHeader(http.StatusInternalServerError)
         errLogger.Println(err.Error())
     } else {
-        response.WriteHeader(http.StatusCreated)
+        response.WriteHeader(http.StatusOK)
+        response.Write(dataJSON)
     }
 }
 
@@ -700,6 +933,13 @@ func updateImageRemotePathOriginal(response http.ResponseWriter, request *http.R
     }
 
     originalLength, lowLength, err := storageBackend.Filesizes(photo.Remotepathorig)
+    // 128 KB minimum
+    if originalLength < 131072 {
+        originalLength = 131072
+    }
+    if lowLength < 131072 {
+        lowLength = 131072
+    }
     if err != nil {
         response.WriteHeader(http.StatusInternalServerError)
         errLogger.Println(err.Error())
@@ -767,6 +1007,25 @@ func amendGroupSharedAssets(response http.ResponseWriter, request *http.Request,
         errLogger.Println(err.Error())
     } else {
         response.WriteHeader(http.StatusOK)
+
+        // notify users
+        var userIDs []string
+        groupUsers, err := neoDB.GetUsersInGroup(token.UID, groupID)
+        if err == io.EOF {
+            return
+        }
+        for userID := range groupUsers {
+            userIDs = append(userIDs, userID)
+        }
+        if requestData.Share {
+            err = notificationService.Notify(userIDs, notification.AssetsAddedToGroupByUser, &map[string]string{"groupid": groupID})
+        } else {
+            err = notificationService.Notify(userIDs, notification.AssetsChangedForGroup, &map[string]string{"groupid": groupID})
+        }
+        if err != nil {
+            errLogger.Println(err.Error())
+            return
+        }
     }
 }
 
@@ -915,50 +1174,6 @@ func getAssetsForAllGroups(response http.ResponseWriter, request *http.Request, 
     }
 }
 
-func deleteAssets(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
-    defer GenericErrorHandler(response)
-
-    token, ok := firebaseauth.AuthToken(request.Context())
-    if !ok {
-        response.WriteHeader(http.StatusUnauthorized)
-        response.Write([]byte("Unable to extract token from request context"))
-        return
-    }
-
-    type Params struct {
-        AssetIDs []string
-    }
-
-    var params Params
-    if err := json.NewDecoder(request.Body).Decode(&params); err != nil {
-        response.WriteHeader(http.StatusBadRequest)
-        response.Write([]byte("Unable to decode JSON payload"))
-        return
-    }
-
-    if len(params.AssetIDs) == 0 {
-        response.WriteHeader(http.StatusBadRequest)
-        response.Write([]byte("AssetIDs is empty"))
-        return
-    }
-
-    objectsToDelete, err := neoDB.DeleteAssets(token.UID, params.AssetIDs)
-    if err != nil {
-        response.WriteHeader(http.StatusInternalServerError)
-        errLogger.Println(err.Error())
-        return
-    }
-
-    err = storageBackend.Delete(*objectsToDelete)
-    if err != nil {
-        response.WriteHeader(http.StatusInternalServerError)
-        errLogger.Println(err.Error())
-        return
-    }
-
-    response.WriteHeader(http.StatusOK)
-}
-
 func leaveGroup(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
     defer GenericErrorHandler(response)
 
@@ -982,6 +1197,21 @@ func leaveGroup(response http.ResponseWriter, request *http.Request, neoDB *data
         errLogger.Println(err.Error())
     } else {
         response.WriteHeader(http.StatusOK)
+
+        // notify users
+        var userIDs []string
+        groupUsers, err := neoDB.GetUsersInGroup(token.UID, groupID)
+        if err == io.EOF {
+            return
+        }
+        for userID := range groupUsers {
+            userIDs = append(userIDs, userID)
+        }
+        err = notificationService.Notify(userIDs, notification.UserLeftGroup, &map[string]string{"groupid": groupID})
+        if err != nil {
+            errLogger.Println(err.Error())
+            return
+        }
     }
 }
 
@@ -1030,5 +1260,22 @@ func amendGroupAssets(response http.ResponseWriter, request *http.Request, neoDB
         errLogger.Println(err.Error())
     } else {
         response.WriteHeader(http.StatusOK)
+
+        if !requestData.Add {
+            // notify users
+            var userIDs []string
+            groupUsers, err := neoDB.GetUsersInGroup(token.UID, groupID)
+            if err == io.EOF {
+                return
+            }
+            for userID := range groupUsers {
+                userIDs = append(userIDs, userID)
+            }
+            err = notificationService.Notify(userIDs, notification.AssetsChangedForGroup, &map[string]string{"groupid": groupID})
+            if err != nil {
+                errLogger.Println(err.Error())
+                return
+            }
+        }
     }
 }
