@@ -392,7 +392,7 @@ func (neo *Neo4j) GetGroups(id string) (map[string]map[string]interface{}, error
     return data, nil
 }
 
-func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remotepath string, createdate *string, location *string, originaluti *string, pixelwidth int, pixelheight int, md5 string, key string, remotepathorig *string, totalsize *uint64) error {
+func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remotepath string, createdate *string, location *string, duration *string, originaluti *string, pixelwidth int, pixelheight int, md5 string, key string, remotepathorig *string, totalsize *uint64) error {
     conn, err := neo.driverPool.OpenPool()
     if err != nil {
         return err
@@ -402,7 +402,7 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remot
     stmt, err := conn.PrepareNeo(
         "MATCH (user:User { id: {id} }) " +
         "MERGE (user) <- [memory:MEMORY] - (image:Image { uuid: {assetid} }) " +
-        "ON CREATE SET memory.key = {key}, image.type = {type}, image.remotepath = {remotepath}, image.remotepathorig = {remotepathorig}, image.createdate = {createdate}, image.location = {location}, image.originaluti = {originaluti}, image.pixelwidth = {pixelwidth}, image.pixelheight = {pixelheight}, image.md5 = {md5}, image.totalsize = {totalsize} ")
+        "ON CREATE SET memory.key = {key}, image.type = {type}, image.remotepath = {remotepath}, image.remotepathorig = {remotepathorig}, image.createdate = {createdate}, image.location = {location}, image.duration = {duration}, image.originaluti = {originaluti}, image.pixelwidth = {pixelwidth}, image.pixelheight = {pixelheight}, image.md5 = {md5}, image.totalsize = {totalsize} ")
     if err != nil {
         return err
     }
@@ -417,6 +417,7 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remot
         "remotepathorig": nil,
         "createdate": nil,
         "location": nil,
+        "duration": nil,
         "originaluti": nil,
         "md5": md5,
         "pixelwidth": pixelwidth,
@@ -428,6 +429,9 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remot
     }
     if location != nil {
         input["location"] = *location
+    }
+    if duration != nil {
+        input["duration"] = *duration
     }
     if originaluti != nil {
         input["originaluti"] = *originaluti

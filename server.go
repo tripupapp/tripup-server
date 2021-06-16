@@ -673,6 +673,7 @@ type asset struct {
     RemotePathOrig *string
     CreateDate *string
     Location *string
+    Duration *string
     OriginalUTI *string
     PixelWidth int
     PixelHeight int
@@ -817,7 +818,7 @@ func createSingleAsset(asset asset, uid string, neoDB *database.Neo4j) (int, err
         totalsize = &size
     }
 
-    err := neoDB.CreateAsset(uid, asset.AssetID, asset.Type, asset.RemotePath, asset.CreateDate, asset.Location, asset.OriginalUTI, asset.PixelWidth, asset.PixelHeight, asset.Md5, asset.Key, asset.RemotePathOrig, totalsize)
+    err := neoDB.CreateAsset(uid, asset.AssetID, asset.Type, asset.RemotePath, asset.CreateDate, asset.Location, asset.Duration, asset.OriginalUTI, asset.PixelWidth, asset.PixelHeight, asset.Md5, asset.Key, asset.RemotePathOrig, totalsize)
     if err != nil {
         return http.StatusInternalServerError, err, nil
     }
