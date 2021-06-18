@@ -211,7 +211,7 @@ func apiPatchAssetsRemoteOriginalPaths(response http.ResponseWriter, request *ht
 }
 
 func apiUpdateOriginalRemote(response http.ResponseWriter, request *http.Request) {
-    updateImageRemotePathOriginal(response, request, database.Instance())
+    putAssetRemotePathOriginal(response, request, database.Instance())
 }
 
 func apiGetAssets(response http.ResponseWriter, request *http.Request) {
@@ -903,7 +903,7 @@ func patchAssetsRemoteOriginalPaths(response http.ResponseWriter, request *http.
     }
 }
 
-func updateImageRemotePathOriginal(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
+func putAssetRemotePathOriginal(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
     defer GenericErrorHandler(response)
 
     token, ok := firebaseauth.AuthToken(request.Context())
