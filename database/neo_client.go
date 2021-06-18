@@ -452,7 +452,7 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remot
     return err
 }
 
-func (neo *Neo4j) UpdatePhotoNodeOriginal(id string, imageid string, remotepathorig string, totalsize uint64) error {
+func (neo *Neo4j) AddPathForOriginalAsset(id string, imageid string, remotepathorig string, totalsize uint64) error {
     if totalsize <= 0 {
         return errors.New("totalsize invalid")
     }
