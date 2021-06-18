@@ -452,7 +452,7 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remot
     return err
 }
 
-func (neo *Neo4j) AddPathForOriginalAsset(id string, imageid string, remotepathorig string, totalsize uint64) error {
+func (neo *Neo4j) AddPathForOriginalAsset(id string, assetid string, remotepathorig string, totalsize uint64) error {
     if totalsize <= 0 {
         return errors.New("totalsize invalid")
     }
@@ -464,7 +464,7 @@ func (neo *Neo4j) AddPathForOriginalAsset(id string, imageid string, remotepatho
     defer conn.Close()
 
     stmt, err := conn.PrepareNeo(
-        "MATCH (:User { id: {id} }) <- [:MEMORY] - (asset:Asset { uuid: {imageid} }) " +
+        "MATCH (:User { id: {id} }) <- [:MEMORY] - (asset:Asset { uuid: {assetid} }) " +
         "SET asset.remotepathorig = {remotepathorig}, asset.totalsize = {totalsize} ")
     if err != nil {
         errLogger.Panicln(err)
@@ -474,7 +474,7 @@ func (neo *Neo4j) AddPathForOriginalAsset(id string, imageid string, remotepatho
     // executing a statement just returns summary information
     result, err := stmt.ExecNeo(map[string] interface{} {
         "id": id,
-        "imageid": imageid,
+        "assetid": assetid,
         "remotepathorig": remotepathorig,
         "totalsize": totalsize,
     })
@@ -557,7 +557,7 @@ func (neo *Neo4j) DeleteAssets(userid string, assetids []string) (*[]string, err
     }
     defer stmt.Close() // closing the statment will also close the rows
 
-    // transform imageids array to a comma seperated string
+    // transform assetids array to a comma seperated string
     // we do this because variable substitution using the golang neo4j driver does not work with arrays
     // see: https://github.com/johnnadratowski/golang-neo4j-bolt-driver/pull/8 which is currently unmerged
     // so we must substitute as a string, then in cypher, split string back to array
@@ -606,7 +606,7 @@ func (neo *Neo4j) RemoveAssetsFromGroup(userid string, groupid string, assetids 
     }
     defer stmt.Close() // closing the statment will also close the rows
 
-    // transform imageids array to a comma seperated string
+    // transform assetids array to a comma seperated string
     // we do this because variable substitution using the golang neo4j driver does not work with arrays
     // see: https://github.com/johnnadratowski/golang-neo4j-bolt-driver/pull/8 which is currently unmerged
     // so we must substitute as a string, then in cypher, split string back to array
@@ -646,7 +646,7 @@ func (neo *Neo4j) AddAssetsToGroup(userid string, groupid string, assetids []str
     }
     defer stmt.Close() // closing the statment will also close the rows
 
-    // transform imageids array to a comma seperated string
+    // transform assetids array to a comma seperated string
     // we do this because variable substitution using the golang neo4j driver does not work with arrays
     // see: https://github.com/johnnadratowski/golang-neo4j-bolt-driver/pull/8 which is currently unmerged
     // so we must substitute as a string, then in cypher, split string back to array
@@ -743,9 +743,9 @@ func (neo *Neo4j) UnshareAssets(id string, groupid string, assetids []string) er
     return err
 }
 
-func (neo *Neo4j) SetFavourite(userid string, tripid string, imageid string) {
+func (neo *Neo4j) SetFavourite(userid string, tripid string, assetid string) {
     // safety checks
-    if len(userid) == 0 || len(tripid) == 0 || len(imageid) == 0 {
+    if len(userid) == 0 || len(tripid) == 0 || len(assetid) == 0 {
         errLogger.Panicln()
     }
 
@@ -756,7 +756,7 @@ func (neo *Neo4j) SetFavourite(userid string, tripid string, imageid string) {
     defer conn.Close()
 
     stmt, err := conn.PrepareNeo(
-        "MATCH (:User { id: {userid} }) <- [:TRIP_OWNER] - (:Trip { uuid: {tripid} }) <- [memory] - (:Asset { uuid: {imageid} }) " +
+        "MATCH (:User { id: {userid} }) <- [:TRIP_OWNER] - (:Trip { uuid: {tripid} }) <- [memory] - (:Asset { uuid: {assetid} }) " +
         "SET memory.favourite = TRUE ")
     if err != nil {
         errLogger.Panicln(err)
@@ -767,7 +767,7 @@ func (neo *Neo4j) SetFavourite(userid string, tripid string, imageid string) {
     result, err := stmt.ExecNeo(map[string] interface{} {
         "userid": userid,
         "tripid": tripid,
-        "imageid": imageid })
+        "assetid": assetid })
     if err != nil {
         errLogger.Panicln(err)
     }
@@ -778,9 +778,9 @@ func (neo *Neo4j) SetFavourite(userid string, tripid string, imageid string) {
     }
 }
 
-func (neo *Neo4j) UnsetFavourite(userid string, tripid string, imageid string) {
+func (neo *Neo4j) UnsetFavourite(userid string, tripid string, assetid string) {
     // safety checks
-    if len(userid) == 0 || len(tripid) == 0 || len(imageid) == 0 {
+    if len(userid) == 0 || len(tripid) == 0 || len(assetid) == 0 {
         errLogger.Panicln()
     }
 
@@ -791,7 +791,7 @@ func (neo *Neo4j) UnsetFavourite(userid string, tripid string, imageid string) {
     defer conn.Close()
 
     stmt, err := conn.PrepareNeo(
-        "MATCH (:User { id: {userid} }) <- [:TRIP_OWNER] - (:Trip { uuid: {tripid} }) <- [memory] - (:Asset { uuid: {imageid} }) " +
+        "MATCH (:User { id: {userid} }) <- [:TRIP_OWNER] - (:Trip { uuid: {tripid} }) <- [memory] - (:Asset { uuid: {assetid} }) " +
         "REMOVE memory.favourite")
     if err != nil {
         errLogger.Panicln(err)
@@ -802,7 +802,7 @@ func (neo *Neo4j) UnsetFavourite(userid string, tripid string, imageid string) {
     result, err := stmt.ExecNeo(map[string] interface{} {
         "userid": userid,
         "tripid": tripid,
-        "imageid": imageid })
+        "assetid": assetid })
     if err != nil {
         errLogger.Panicln(err)
     }
