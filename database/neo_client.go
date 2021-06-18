@@ -401,8 +401,8 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remot
 
     stmt, err := conn.PrepareNeo(
         "MATCH (user:User { id: {id} }) " +
-        "MERGE (user) <- [memory:MEMORY] - (image:Asset { uuid: {assetid} }) " +
-        "ON CREATE SET memory.key = {key}, image.type = {type}, image.remotepath = {remotepath}, image.remotepathorig = {remotepathorig}, image.createdate = {createdate}, image.location = {location}, image.duration = {duration}, image.originaluti = {originaluti}, image.pixelwidth = {pixelwidth}, image.pixelheight = {pixelheight}, image.md5 = {md5}, image.totalsize = {totalsize} ")
+        "MERGE (user) <- [memory:MEMORY] - (asset:Asset { uuid: {assetid} }) " +
+        "ON CREATE SET memory.key = {key}, asset.type = {type}, asset.remotepath = {remotepath}, asset.remotepathorig = {remotepathorig}, asset.createdate = {createdate}, asset.location = {location}, asset.duration = {duration}, asset.originaluti = {originaluti}, asset.pixelwidth = {pixelwidth}, asset.pixelheight = {pixelheight}, asset.md5 = {md5}, asset.totalsize = {totalsize} ")
     if err != nil {
         return err
     }
@@ -464,8 +464,8 @@ func (neo *Neo4j) UpdatePhotoNodeOriginal(id string, imageid string, remotepatho
     defer conn.Close()
 
     stmt, err := conn.PrepareNeo(
-        "MATCH (:User { id: {id} }) <- [:MEMORY] - (image:Asset { uuid: {imageid} }) " +
-        "SET image.remotepathorig = {remotepathorig}, image.totalsize = {totalsize} ")
+        "MATCH (:User { id: {id} }) <- [:MEMORY] - (asset:Asset { uuid: {imageid} }) " +
+        "SET asset.remotepathorig = {remotepathorig}, asset.totalsize = {totalsize} ")
     if err != nil {
         errLogger.Panicln(err)
     }
@@ -675,12 +675,12 @@ func (neo *Neo4j) ShareAssets(id string, groupid string, assetids []string, asse
     defer conn.Close()
 
     stmt, err := conn.PrepareNeo(
-        "MATCH (user:User { id: {id} }) - [:MEMBER] -> (group:Group { uuid: {groupid} }) <- [groupasset:GROUP_ASSET] - (image:Asset { uuid: {assetid} }) - [:MEMORY] -> (user) " +
+        "MATCH (user:User { id: {id} }) - [:MEMBER] -> (group:Group { uuid: {groupid} }) <- [groupasset:GROUP_ASSET] - (asset:Asset { uuid: {assetid} }) - [:MEMORY] -> (user) " +
         "SET group._lock = true, groupasset.sharedKey = {key} " +
-        "WITH user, group, image " +
+        "WITH user, group, asset " +
         "MATCH (group) - [:MEMBER] - (others:User) " +
         "WHERE user <> others " +
-        "MERGE (image) - [:MEMORY_SHARED] -> (others) ")
+        "MERGE (asset) - [:MEMORY_SHARED] -> (others) ")
     if err != nil {
         return err
     }
