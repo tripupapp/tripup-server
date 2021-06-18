@@ -211,7 +211,7 @@ func apiPatchAssetsRemoteOriginalPaths(response http.ResponseWriter, request *ht
 }
 
 func apiUpdateOriginalRemote(response http.ResponseWriter, request *http.Request) {
-    updateImageRemotePathOriginal(response, request, database.Instance())
+    putAssetRemotePathOriginal(response, request, database.Instance())
 }
 
 func apiGetAssets(response http.ResponseWriter, request *http.Request) {
@@ -879,7 +879,7 @@ func patchAssetsRemoteOriginalPaths(response http.ResponseWriter, request *http.
             break
         }
 
-        err = neoDB.UpdatePhotoNodeOriginal(token.UID, assetID, remotePathOriginal, originalLength + lowLength)
+        err = neoDB.AddPathForOriginalAsset(token.UID, assetID, remotePathOriginal, originalLength + lowLength)
         if err != nil {
             break
         }
@@ -903,7 +903,7 @@ func patchAssetsRemoteOriginalPaths(response http.ResponseWriter, request *http.
     }
 }
 
-func updateImageRemotePathOriginal(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
+func putAssetRemotePathOriginal(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
     defer GenericErrorHandler(response)
 
     token, ok := firebaseauth.AuthToken(request.Context())
@@ -918,23 +918,22 @@ func updateImageRemotePathOriginal(response http.ResponseWriter, request *http.R
         return
     }
 
-    type PhotoProps struct {
+    type assetUpdate struct {
         Remotepathorig string
     }
 
-    // parse request body for photo details
-    var photo PhotoProps
-    if err := json.NewDecoder(request.Body).Decode(&photo); err != nil {
+    var asset assetUpdate
+    if err := json.NewDecoder(request.Body).Decode(&asset); err != nil {
         errLogger.Panicln(err)
     }
 
-    if err := validateArgsNotZero([]string{photo.Remotepathorig}); err != nil {
+    if err := validateArgsNotZero([]string{asset.Remotepathorig}); err != nil {
         response.WriteHeader(http.StatusBadRequest)
         response.Write([]byte(err.Error()))
         return
     }
 
-    originalLength, lowLength, err := storageBackend.Filesizes(photo.Remotepathorig)
+    originalLength, lowLength, err := storageBackend.Filesizes(asset.Remotepathorig)
     // 128 KB minimum
     if originalLength < 131072 {
         originalLength = 131072
@@ -947,7 +946,7 @@ func updateImageRemotePathOriginal(response http.ResponseWriter, request *http.R
         errLogger.Println(err.Error())
     }
 
-    err = neoDB.UpdatePhotoNodeOriginal(token.UID, assetID, photo.Remotepathorig, originalLength + lowLength)
+    err = neoDB.AddPathForOriginalAsset(token.UID, assetID, asset.Remotepathorig, originalLength + lowLength)
     if err != nil {
         response.WriteHeader(http.StatusInternalServerError)
         errLogger.Println(err.Error())
