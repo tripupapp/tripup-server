@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"bitbucket.org/tripup/server/storage"
 	bolt "github.com/johnnadratowski/golang-neo4j-bolt-driver"
+	"github.com/tripupapp/tripup-server/storage"
 )
 
 var errLogger = log.New(os.Stderr, "[ERROR] ServerLog: ", log.LstdFlags | log.Lshortfile)

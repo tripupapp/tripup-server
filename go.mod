@@ -1,4 +1,4 @@
-module bitbucket.org/tripup/server
+module github.com/tripupapp/tripup-server
 
 go 1.15
 

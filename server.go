@@ -20,10 +20,10 @@ import (
 	"github.com/pressly/chi/middleware"
 	firebaseauth "github.com/vin047/firebase-middleware"
 
-	"bitbucket.org/tripup/server/auth"
-	"bitbucket.org/tripup/server/database"
-	"bitbucket.org/tripup/server/notification"
-	"bitbucket.org/tripup/server/storage"
+	"github.com/tripupapp/tripup-server/auth"
+	"github.com/tripupapp/tripup-server/database"
+	"github.com/tripupapp/tripup-server/notification"
+	"github.com/tripupapp/tripup-server/storage"
 )
 
 var logger *log.Logger = log.New(os.Stdout, "[INFO] ServerLog: ", log.LstdFlags)

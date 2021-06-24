@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	bolt "github.com/johnnadratowski/golang-neo4j-bolt-driver"
 
-	"bitbucket.org/tripup/server/auth"
+	"github.com/tripupapp/tripup-server/auth"
 )
 
 var debugLogger *log.Logger = log.New(os.Stdout, "[DEBUG] NeoLog: ", log.LstdFlags | log.Lshortfile)
