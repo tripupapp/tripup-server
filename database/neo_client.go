@@ -392,7 +392,7 @@ func (neo *Neo4j) GetGroups(id string) (map[string]map[string]interface{}, error
     return data, nil
 }
 
-func (neo *Neo4j) CreateAsset(id string, assetid string, remotepath string, createdate *string, location *string, originaluti *string, pixelwidth int, pixelheight int, md5 string, key string, remotepathorig *string, totalsize *uint64) error {
+func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remotepath string, createdate *string, location *string, duration *string, originaluti *string, pixelwidth int, pixelheight int, md5 string, key string, remotepathorig *string, totalsize *uint64) error {
     conn, err := neo.driverPool.OpenPool()
     if err != nil {
         return err
@@ -401,8 +401,8 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, remotepath string, crea
 
     stmt, err := conn.PrepareNeo(
         "MATCH (user:User { id: {id} }) " +
-        "MERGE (user) <- [memory:MEMORY] - (image:Image { uuid: {assetid} }) " +
-        "ON CREATE SET memory.key = {key}, image.remotepath = {remotepath}, image.remotepathorig = {remotepathorig}, image.createdate = {createdate}, image.location = {location}, image.originaluti = {originaluti}, image.pixelwidth = {pixelwidth}, image.pixelheight = {pixelheight}, image.md5 = {md5}, image.totalsize = {totalsize} ")
+        "MERGE (user) <- [memory:MEMORY] - (asset:Asset { uuid: {assetid} }) " +
+        "ON CREATE SET memory.key = {key}, asset.type = {type}, asset.remotepath = {remotepath}, asset.remotepathorig = {remotepathorig}, asset.createdate = {createdate}, asset.location = {location}, asset.duration = {duration}, asset.originaluti = {originaluti}, asset.pixelwidth = {pixelwidth}, asset.pixelheight = {pixelheight}, asset.md5 = {md5}, asset.totalsize = {totalsize} ")
     if err != nil {
         return err
     }
@@ -412,10 +412,12 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, remotepath string, crea
     input := map[string]interface{} {
         "id": id,
         "assetid": assetid,
+        "type": assettype,
         "remotepath": remotepath,
         "remotepathorig": nil,
         "createdate": nil,
         "location": nil,
+        "duration": nil,
         "originaluti": nil,
         "md5": md5,
         "pixelwidth": pixelwidth,
@@ -427,6 +429,9 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, remotepath string, crea
     }
     if location != nil {
         input["location"] = *location
+    }
+    if duration != nil {
+        input["duration"] = *duration
     }
     if originaluti != nil {
         input["originaluti"] = *originaluti
@@ -447,7 +452,7 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, remotepath string, crea
     return err
 }
 
-func (neo *Neo4j) UpdatePhotoNodeOriginal(id string, imageid string, remotepathorig string, totalsize uint64) error {
+func (neo *Neo4j) AddPathForOriginalAsset(id string, assetid string, remotepathorig string, totalsize uint64) error {
     if totalsize <= 0 {
         return errors.New("totalsize invalid")
     }
@@ -459,8 +464,8 @@ func (neo *Neo4j) UpdatePhotoNodeOriginal(id string, imageid string, remotepatho
     defer conn.Close()
 
     stmt, err := conn.PrepareNeo(
-        "MATCH (:User { id: {id} }) <- [:MEMORY] - (image:Image { uuid: {imageid} }) " +
-        "SET image.remotepathorig = {remotepathorig}, image.totalsize = {totalsize} ")
+        "MATCH (:User { id: {id} }) <- [:MEMORY] - (asset:Asset { uuid: {assetid} }) " +
+        "SET asset.remotepathorig = {remotepathorig}, asset.totalsize = {totalsize} ")
     if err != nil {
         errLogger.Panicln(err)
     }
@@ -469,7 +474,7 @@ func (neo *Neo4j) UpdatePhotoNodeOriginal(id string, imageid string, remotepatho
     // executing a statement just returns summary information
     result, err := stmt.ExecNeo(map[string] interface{} {
         "id": id,
-        "imageid": imageid,
+        "assetid": assetid,
         "remotepathorig": remotepathorig,
         "totalsize": totalsize,
     })
@@ -500,7 +505,7 @@ func (neo *Neo4j) LeaveGroup(ownerid string, groupid string) error {
         "OPTIONAL MATCH (group) - [invites:MEMBER {inviter: user.uuid}] - (:User) " +
         "DELETE invites " +
         "WITH user, group " +
-        "OPTIONAL MATCH (group) - [groupRel:GROUP_ASSET] - (assets:Image) - [:MEMORY] - (user) " +
+        "OPTIONAL MATCH (group) - [groupRel:GROUP_ASSET] - (assets:Asset) - [:MEMORY] - (user) " +
         "DELETE groupRel " +
         "WITH group, assets " +
         "OPTIONAL MATCH (assets) - [sharedmemories:MEMORY_SHARED] - (users:User) " +
@@ -537,12 +542,12 @@ func (neo *Neo4j) DeleteAssets(userid string, assetids []string) (*[]string, err
         "MATCH (user:User { id: {userid} }) " +
         "WITH user, split({assetids}, ',') as assetids " + // notice the String split function - explanation below
         // remove references for assets that aren't owned by user
-        "OPTIONAL MATCH (user) - [memoryShared:MEMORY_SHARED] - (assets:Image) " +
+        "OPTIONAL MATCH (user) - [memoryShared:MEMORY_SHARED] - (assets:Asset) " +
         "WHERE assets.uuid in assetids " +
         "DELETE memoryShared " +
         // delete assets completely for assets that are owned by user
         "WITH user, assetids " +
-        "MATCH (user) - [:MEMORY] - (assets:Image) " +
+        "MATCH (user) - [:MEMORY] - (assets:Asset) " +
         "WHERE assets.uuid in assetids " +
         "WITH assets, assets.remotepath AS remotepaths, assets.remotepathorig AS remotepathsoriginal " +
         "DETACH DELETE assets " +
@@ -552,7 +557,7 @@ func (neo *Neo4j) DeleteAssets(userid string, assetids []string) (*[]string, err
     }
     defer stmt.Close() // closing the statment will also close the rows
 
-    // transform imageids array to a comma seperated string
+    // transform assetids array to a comma seperated string
     // we do this because variable substitution using the golang neo4j driver does not work with arrays
     // see: https://github.com/johnnadratowski/golang-neo4j-bolt-driver/pull/8 which is currently unmerged
     // so we must substitute as a string, then in cypher, split string back to array
@@ -589,7 +594,7 @@ func (neo *Neo4j) RemoveAssetsFromGroup(userid string, groupid string, assetids 
         "MATCH (user:User { id: {userid} }) - [:MEMBER] - (group:Group { uuid: {groupid} }) " +
         "SET group._lock = true " +
         "WITH user, group, split({assetids}, ',') as assetids " +    // notice the String split function - explanation below
-        "MATCH (user) - [:MEMORY] - (assets:Image) - [groupassets:GROUP_ASSET] - (group) " +
+        "MATCH (user) - [:MEMORY] - (assets:Asset) - [groupassets:GROUP_ASSET] - (group) " +
         "WHERE assets.uuid in assetids " +
         "DELETE groupassets " +
         "WITH assets " +
@@ -601,7 +606,7 @@ func (neo *Neo4j) RemoveAssetsFromGroup(userid string, groupid string, assetids 
     }
     defer stmt.Close() // closing the statment will also close the rows
 
-    // transform imageids array to a comma seperated string
+    // transform assetids array to a comma seperated string
     // we do this because variable substitution using the golang neo4j driver does not work with arrays
     // see: https://github.com/johnnadratowski/golang-neo4j-bolt-driver/pull/8 which is currently unmerged
     // so we must substitute as a string, then in cypher, split string back to array
@@ -633,7 +638,7 @@ func (neo *Neo4j) AddAssetsToGroup(userid string, groupid string, assetids []str
         "MATCH (user:User { id: {userid} }) - [:MEMBER] - (group:Group { uuid: {groupid} }) " +
         "SET group._lock = true " +
         "WITH user, group, split({assetids}, ',') as assetids " +    // notice the String split function - explanation below
-        "MATCH (user) - [:MEMORY] - (assets:Image) " +
+        "MATCH (user) - [:MEMORY] - (assets:Asset) " +
         "WHERE assets.uuid in assetids " +
         "MERGE (assets) - [:GROUP_ASSET] -> (group) ")
     if err != nil {
@@ -641,7 +646,7 @@ func (neo *Neo4j) AddAssetsToGroup(userid string, groupid string, assetids []str
     }
     defer stmt.Close() // closing the statment will also close the rows
 
-    // transform imageids array to a comma seperated string
+    // transform assetids array to a comma seperated string
     // we do this because variable substitution using the golang neo4j driver does not work with arrays
     // see: https://github.com/johnnadratowski/golang-neo4j-bolt-driver/pull/8 which is currently unmerged
     // so we must substitute as a string, then in cypher, split string back to array
@@ -670,12 +675,12 @@ func (neo *Neo4j) ShareAssets(id string, groupid string, assetids []string, asse
     defer conn.Close()
 
     stmt, err := conn.PrepareNeo(
-        "MATCH (user:User { id: {id} }) - [:MEMBER] -> (group:Group { uuid: {groupid} }) <- [groupasset:GROUP_ASSET] - (image:Image { uuid: {assetid} }) - [:MEMORY] -> (user) " +
+        "MATCH (user:User { id: {id} }) - [:MEMBER] -> (group:Group { uuid: {groupid} }) <- [groupasset:GROUP_ASSET] - (asset:Asset { uuid: {assetid} }) - [:MEMORY] -> (user) " +
         "SET group._lock = true, groupasset.sharedKey = {key} " +
-        "WITH user, group, image " +
+        "WITH user, group, asset " +
         "MATCH (group) - [:MEMBER] - (others:User) " +
         "WHERE user <> others " +
-        "MERGE (image) - [:MEMORY_SHARED] -> (others) ")
+        "MERGE (asset) - [:MEMORY_SHARED] -> (others) ")
     if err != nil {
         return err
     }
@@ -707,7 +712,7 @@ func (neo *Neo4j) UnshareAssets(id string, groupid string, assetids []string) er
 
     stmt, err := conn.PrepareNeo(
         "WITH split({assetids}, ',') as assetids " +    // notice the String split function - explanation below
-        "MATCH (user:User { id: {id} }) - [:MEMBER] - (group:Group { uuid: {groupid} }) - [groupassets:GROUP_ASSET] - (assets:Image) - [:MEMORY] - (user) " +
+        "MATCH (user:User { id: {id} }) - [:MEMBER] - (group:Group { uuid: {groupid} }) - [groupassets:GROUP_ASSET] - (assets:Asset) - [:MEMORY] - (user) " +
         "WHERE assets.uuid in assetids " +
         "SET group._lock = true " +
         "REMOVE groupassets.sharedKey " +
@@ -738,9 +743,9 @@ func (neo *Neo4j) UnshareAssets(id string, groupid string, assetids []string) er
     return err
 }
 
-func (neo *Neo4j) SetFavourite(userid string, tripid string, imageid string) {
+func (neo *Neo4j) SetFavourite(userid string, tripid string, assetid string) {
     // safety checks
-    if len(userid) == 0 || len(tripid) == 0 || len(imageid) == 0 {
+    if len(userid) == 0 || len(tripid) == 0 || len(assetid) == 0 {
         errLogger.Panicln()
     }
 
@@ -751,7 +756,7 @@ func (neo *Neo4j) SetFavourite(userid string, tripid string, imageid string) {
     defer conn.Close()
 
     stmt, err := conn.PrepareNeo(
-        "MATCH (:User { id: {userid} }) <- [:TRIP_OWNER] - (:Trip { uuid: {tripid} }) <- [memory] - (:Image { uuid: {imageid} }) " +
+        "MATCH (:User { id: {userid} }) <- [:TRIP_OWNER] - (:Trip { uuid: {tripid} }) <- [memory] - (:Asset { uuid: {assetid} }) " +
         "SET memory.favourite = TRUE ")
     if err != nil {
         errLogger.Panicln(err)
@@ -762,7 +767,7 @@ func (neo *Neo4j) SetFavourite(userid string, tripid string, imageid string) {
     result, err := stmt.ExecNeo(map[string] interface{} {
         "userid": userid,
         "tripid": tripid,
-        "imageid": imageid })
+        "assetid": assetid })
     if err != nil {
         errLogger.Panicln(err)
     }
@@ -773,9 +778,9 @@ func (neo *Neo4j) SetFavourite(userid string, tripid string, imageid string) {
     }
 }
 
-func (neo *Neo4j) UnsetFavourite(userid string, tripid string, imageid string) {
+func (neo *Neo4j) UnsetFavourite(userid string, tripid string, assetid string) {
     // safety checks
-    if len(userid) == 0 || len(tripid) == 0 || len(imageid) == 0 {
+    if len(userid) == 0 || len(tripid) == 0 || len(assetid) == 0 {
         errLogger.Panicln()
     }
 
@@ -786,7 +791,7 @@ func (neo *Neo4j) UnsetFavourite(userid string, tripid string, imageid string) {
     defer conn.Close()
 
     stmt, err := conn.PrepareNeo(
-        "MATCH (:User { id: {userid} }) <- [:TRIP_OWNER] - (:Trip { uuid: {tripid} }) <- [memory] - (:Image { uuid: {imageid} }) " +
+        "MATCH (:User { id: {userid} }) <- [:TRIP_OWNER] - (:Trip { uuid: {tripid} }) <- [memory] - (:Asset { uuid: {assetid} }) " +
         "REMOVE memory.favourite")
     if err != nil {
         errLogger.Panicln(err)
@@ -797,7 +802,7 @@ func (neo *Neo4j) UnsetFavourite(userid string, tripid string, imageid string) {
     result, err := stmt.ExecNeo(map[string] interface{} {
         "userid": userid,
         "tripid": tripid,
-        "imageid": imageid })
+        "assetid": assetid })
     if err != nil {
         errLogger.Panicln(err)
     }
@@ -816,7 +821,7 @@ func (neo *Neo4j) PatchSchema0(id string, assetkeys map[string]string, assetmd5s
     defer conn.Close()
 
     replaceKeyStatement, err := conn.PrepareNeo(
-        "MATCH (:User { id: {id} }) <- [memory:MEMORY] - (:Image {uuid: {assetid} }) " +
+        "MATCH (:User { id: {id} }) <- [memory:MEMORY] - (:Asset {uuid: {assetid} }) " +
         "SET memory.key = {key} " +
         "REMOVE memory.legacy_tripKey, memory.legacy_assetKey ")
     if err != nil {
@@ -840,7 +845,7 @@ func (neo *Neo4j) PatchSchema0(id string, assetkeys map[string]string, assetmd5s
     replaceKeyStatement.Close()
 
     setMD5Statement, err := conn.PrepareNeo(
-        "MATCH (:User { id: {id} }) <- [memory:MEMORY|:MEMORY_SHARED] - (asset:Image {uuid: {assetid} }) " +
+        "MATCH (:User { id: {id} }) <- [memory:MEMORY|:MEMORY_SHARED] - (asset:Asset {uuid: {assetid} }) " +
         "SET asset.md5 = {md5} ")
     if err != nil {
         return err
@@ -882,12 +887,12 @@ func (neo *Neo4j) PatchSchema0(id string, assetkeys map[string]string, assetmd5s
 
 func (neo *Neo4j) GetAssets(id string) ([]interface{}, error) {
     query :=
-        "MATCH (user:User {id: {id} }) - [memory:MEMORY] - (asset:Image) " +
+        "MATCH (user:User {id: {id} }) - [memory:MEMORY] - (asset:Asset) " +
         "WITH user.uuid as ownerid, (asset), memory.key as key, exists(memory.favourite) as favourite " +
         "RETURN asset{.*, ownerid, key, favourite} as assets " +
         "UNION " +
-        "MATCH (user:User {id: {id} }) - [memory:MEMORY_SHARED] - (asset:Image) - [groupasset:GROUP_ASSET] - (group:Group) - [:MEMBER] - (user) " +
-        "MATCH (asset:Image) - [:MEMORY] - (owner:User) " +
+        "MATCH (user:User {id: {id} }) - [memory:MEMORY_SHARED] - (asset:Asset) - [groupasset:GROUP_ASSET] - (group:Group) - [:MEMBER] - (user) " +
+        "MATCH (asset:Asset) - [:MEMORY] - (owner:User) " +
         "WITH owner.uuid as ownerid, (asset), groupasset.sharedKey as key, exists(memory.favourite) as favourite, group.uuid as groupid " +
         "RETURN DISTINCT asset{.*, ownerid, key, favourite, groupid} as assets "
     return neo.getAssets(id, query)
@@ -895,10 +900,10 @@ func (neo *Neo4j) GetAssets(id string) ([]interface{}, error) {
 
 func (neo *Neo4j) GetAssetsSchema0(id string) ([]interface{}, error) {
     query :=
-        "MATCH (user:User {id: {id} }) - [memory:MEMORY] - (asset:Image) " +
+        "MATCH (user:User {id: {id} }) - [memory:MEMORY] - (asset:Asset) " +
         "RETURN {id: asset.uuid, remotepathorig: asset.remotepathorig, tripkey: memory.legacy_tripKey, assetkey: memory.legacy_assetKey, key: memory.key, md5: asset.md5} as assets " +
         "UNION " +
-        "MATCH (user:User {id: {id} }) - [memory:MEMORY_SHARED] - (asset:Image) - [groupasset:GROUP_ASSET] - (group:Group) - [:MEMBER] - (user) " +
+        "MATCH (user:User {id: {id} }) - [memory:MEMORY_SHARED] - (asset:Asset) - [groupasset:GROUP_ASSET] - (group:Group) - [:MEMBER] - (user) " +
         "RETURN {id: asset.uuid, remotepathorig: asset.remotepathorig, groupid: group.uuid, sharedkey: groupasset.sharedKey, md5: asset.md5} as assets "
     return neo.getAssets(id, query)
 }
@@ -951,9 +956,9 @@ func (neo *Neo4j) GetAssetsForAllGroups(userid string) (map[string]map[string][]
     stmt, err := conn.PrepareNeo(
         "MATCH (user:User {id: {userid} }) - [:MEMBER] - (group:Group) " +
         "WITH user, group " +
-        "OPTIONAL MATCH (user) - [:MEMORY|:MEMORY_SHARED] - (assets:Image) - [:GROUP_ASSET] - (group) " +
+        "OPTIONAL MATCH (user) - [:MEMORY|:MEMORY_SHARED] - (assets:Asset) - [:GROUP_ASSET] - (group) " +
         "WITH user, group, CASE WHEN assets IS NOT NULL THEN collect(assets.uuid) ELSE [] END as assetids " +
-        "OPTIONAL MATCH (user) - [:MEMORY|:MEMORY_SHARED] - (assets:Image) - [groupassets:GROUP_ASSET] - (group) " +
+        "OPTIONAL MATCH (user) - [:MEMORY|:MEMORY_SHARED] - (assets:Asset) - [groupassets:GROUP_ASSET] - (group) " +
         "WHERE exists(groupassets.sharedKey) " +
         "RETURN group.uuid, assetids, CASE WHEN assets IS NOT NULL THEN collect(assets.uuid) ELSE [] END as sharedassetids ")
     if err != nil {
@@ -1067,7 +1072,7 @@ func (neo *Neo4j) JoinGroup(id string, groupID string, groupKey string) error {
         "SET membership.key = {groupKey} " +
         "REMOVE membership.inviter " +
         "WITH user, group " +
-        "MATCH (group) - [groupasset:GROUP_ASSET] - (assets:Image) " +
+        "MATCH (group) - [groupasset:GROUP_ASSET] - (assets:Asset) " +
         "WHERE exists(groupasset.sharedKey) " +
         "MERGE (user) <- [:MEMORY_SHARED] - (assets) ")
     if err != nil {
