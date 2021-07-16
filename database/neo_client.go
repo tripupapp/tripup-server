@@ -399,10 +399,13 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remot
     }
     defer conn.Close()
 
+    fields := "memory.key = {key}, asset.type = {type}, asset.remotepath = {remotepath}, asset.remotepathorig = {remotepathorig}, asset.createdate = {createdate}, asset.location = {location}, asset.duration = {duration}, asset.originaluti = {originaluti}, asset.pixelwidth = {pixelwidth}, asset.pixelheight = {pixelheight}, asset.md5 = {md5}, asset.totalsize = {totalsize} "
+
     stmt, err := conn.PrepareNeo(
         "MATCH (user:User { id: {id} }) " +
         "MERGE (user) <- [memory:MEMORY] - (asset:Asset { uuid: {assetid} }) " +
-        "ON CREATE SET memory.key = {key}, asset.type = {type}, asset.remotepath = {remotepath}, asset.remotepathorig = {remotepathorig}, asset.createdate = {createdate}, asset.location = {location}, asset.duration = {duration}, asset.originaluti = {originaluti}, asset.pixelwidth = {pixelwidth}, asset.pixelheight = {pixelheight}, asset.md5 = {md5}, asset.totalsize = {totalsize} ")
+        "ON CREATE SET " + fields +
+        "ON MATCH SET " + fields)
     if err != nil {
         return err
     }
