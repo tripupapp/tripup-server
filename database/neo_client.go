@@ -392,14 +392,14 @@ func (neo *Neo4j) GetGroups(id string) (map[string]map[string]interface{}, error
     return data, nil
 }
 
-func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remotepath string, createdate *string, location *string, duration *string, originaluti *string, pixelwidth int, pixelheight int, md5 string, key string, remotepathorig *string, totalsize *uint64) error {
+func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remotepath string, createdate *string, location *string, duration *string, originalfilename *string, originaluti *string, pixelwidth int, pixelheight int, md5 string, key string, remotepathorig *string, totalsize *uint64) error {
     conn, err := neo.driverPool.OpenPool()
     if err != nil {
         return err
     }
     defer conn.Close()
 
-    fields := "memory.key = {key}, asset.type = {type}, asset.remotepath = {remotepath}, asset.remotepathorig = {remotepathorig}, asset.createdate = {createdate}, asset.location = {location}, asset.duration = {duration}, asset.originaluti = {originaluti}, asset.pixelwidth = {pixelwidth}, asset.pixelheight = {pixelheight}, asset.md5 = {md5}, asset.totalsize = {totalsize} "
+    fields := "memory.key = {key}, asset.type = {type}, asset.remotepath = {remotepath}, asset.remotepathorig = {remotepathorig}, asset.createdate = {createdate}, asset.location = {location}, asset.duration = {duration}, asset.originalfilename = {originalfilename}, asset.originaluti = {originaluti}, asset.pixelwidth = {pixelwidth}, asset.pixelheight = {pixelheight}, asset.md5 = {md5}, asset.totalsize = {totalsize} "
 
     stmt, err := conn.PrepareNeo(
         "MATCH (user:User { id: {id} }) " +
@@ -421,6 +421,7 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remot
         "createdate": nil,
         "location": nil,
         "duration": nil,
+        "originalfilename": nil,
         "originaluti": nil,
         "md5": md5,
         "pixelwidth": pixelwidth,
@@ -435,6 +436,9 @@ func (neo *Neo4j) CreateAsset(id string, assetid string, assettype string, remot
     }
     if duration != nil {
         input["duration"] = *duration
+    }
+    if originalfilename != nil {
+        input["originalfilename"] = *originalfilename
     }
     if originaluti != nil {
         input["originaluti"] = *originaluti
