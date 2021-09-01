@@ -823,6 +823,7 @@ func createSingleAsset(asset asset, uid string, neoDB *database.Neo4j) (int, err
             lowLength = 131072
         }
         if err != nil {
+            errLogger.Println(*asset.RemotePathOrig)
             return http.StatusInternalServerError, err, nil
         }
         size := originalLength + lowLength
