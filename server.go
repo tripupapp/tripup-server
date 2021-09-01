@@ -100,7 +100,9 @@ func main() {
         subrouter.Post("/", apiCreateAsset)
         subrouter.Patch("/", apiPatchAssets)
         subrouter.Patch("/original", apiPatchAssetsRemoteOriginalPaths)
+        subrouter.Patch("/originalfilenames", apiPatchAssetsOriginalFilenames)
         subrouter.Put("/{assetID}/original", apiUpdateOriginalRemote)
+        subrouter.Put("/{assetID}/originalfilename", apiPutAssetOriginalFilename)
     })
     router.Route("/groups", func(subrouter chi.Router) {
         subrouter.Use(middleware.Throttle(throttle))    // max 10 requests processed at same time, backlog others
@@ -212,6 +214,14 @@ func apiPatchAssetsRemoteOriginalPaths(response http.ResponseWriter, request *ht
 
 func apiUpdateOriginalRemote(response http.ResponseWriter, request *http.Request) {
     putAssetRemotePathOriginal(response, request, database.Instance())
+}
+
+func apiPutAssetOriginalFilename(response http.ResponseWriter, request *http.Request) {
+    putAssetOriginalFilename(response, request, database.Instance())
+}
+
+func apiPatchAssetsOriginalFilenames(response http.ResponseWriter, request *http.Request) {
+    patchAssetsOriginalFilenames(response, request, database.Instance())
 }
 
 func apiGetAssets(response http.ResponseWriter, request *http.Request) {
@@ -959,6 +969,80 @@ func putAssetRemotePathOriginal(response http.ResponseWriter, request *http.Requ
     }
 
     response.WriteHeader(http.StatusOK)
+}
+
+func putAssetOriginalFilename(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
+    defer GenericErrorHandler(response)
+
+    token, ok := firebaseauth.AuthToken(request.Context())
+    if !ok {
+        response.WriteHeader(http.StatusUnauthorized)
+        response.Write([]byte("Unable to extract token from request context"))
+        return
+    }
+
+    assetID := chi.URLParam(request, "assetID")
+    if _, err := uuid.Parse(assetID); err != nil {
+        response.WriteHeader(http.StatusBadRequest)
+        response.Write([]byte("Invalid UUID string for Asset ID"))
+        return
+    }
+
+    var payload struct {
+        Originalfilename    string
+    }
+    if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+        response.WriteHeader(http.StatusBadRequest)
+        response.Write([]byte(err.Error()))
+        return
+    }
+
+    err := neoDB.SetAssetOriginalFilename(token.UID, assetID, payload.Originalfilename)
+    if err == nil {
+        response.WriteHeader(http.StatusOK)
+    } else {
+        response.WriteHeader(http.StatusInternalServerError)
+        errLogger.Println(err.Error())
+    }
+}
+
+func patchAssetsOriginalFilenames(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {
+    defer GenericErrorHandler(response)
+
+    token, ok := firebaseauth.AuthToken(request.Context())
+    if !ok {
+        response.WriteHeader(http.StatusUnauthorized)
+        response.Write([]byte("Unable to extract token from request context"))
+        return
+    }
+
+    var payload map[string]string
+    if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+        response.WriteHeader(http.StatusBadRequest)
+        response.Write([]byte(err.Error()))
+        return
+    }
+
+    if len(payload) == 0 {
+        response.WriteHeader(http.StatusBadRequest)
+        response.Write([]byte("payload is empty"))
+        return
+    }
+
+    var err error
+    for assetID, originalfilename := range payload {
+        err = neoDB.SetAssetOriginalFilename(token.UID, assetID, originalfilename)
+        if err != nil {
+            break
+        }
+    }
+
+    if err == nil {
+        response.WriteHeader(http.StatusOK)
+    } else {
+        response.WriteHeader(http.StatusInternalServerError)
+        errLogger.Println(err.Error())
+    }
 }
 
 func amendGroupSharedAssets(response http.ResponseWriter, request *http.Request, neoDB *database.Neo4j) {

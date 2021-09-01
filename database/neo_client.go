@@ -497,6 +497,35 @@ func (neo *Neo4j) AddPathForOriginalAsset(id string, assetid string, remotepatho
     return err
 }
 
+func (neo *Neo4j) SetAssetOriginalFilename(id string, assetid string, originalfilename string) error {
+    conn, err := neo.driverPool.OpenPool()
+    if err != nil {
+        return err
+    }
+    defer conn.Close()
+
+    stmt, err := conn.PrepareNeo(
+        "MATCH (:User { id: {id} }) <- [:MEMORY] - (asset:Asset { uuid: {assetid} }) " +
+        "SET asset.originalfilename = {originalfilename} ")
+    if err != nil {
+        return err
+    }
+    defer stmt.Close() // closing the statment will also close the rows
+
+    // executing a statement just returns summary information
+    result, err := stmt.ExecNeo(map[string] interface{} {
+        "id": id,
+        "assetid": assetid,
+        "originalfilename": originalfilename,
+    })
+    if err != nil {
+        return err
+    }
+
+    _, err = result.RowsAffected()
+    return err
+}
+
 func (neo *Neo4j) LeaveGroup(ownerid string, groupid string) error {
     conn, err := neo.driverPool.OpenPool()
     if err != nil {
