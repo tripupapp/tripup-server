@@ -497,13 +497,18 @@ func (neo *Neo4j) AddPathForOriginalAsset(id string, assetid string, remotepatho
     return err
 }
 
-func (neo *Neo4j) SetAssetOriginalFilename(id string, assetid string, originalfilename string) error {
+func (neo *Neo4j) SetAssetsOriginalFilenames(id string, data map[string]string) error {
     conn, err := neo.driverPool.OpenPool()
     if err != nil {
         return err
     }
     defer conn.Close()
 
+    // stmt, err := conn.PrepareNeo(
+    //     "WITH {dicts} AS dicts " +
+    //     "UNWIND dicts as data " +
+    //     "MATCH (:User { id: {id} }) <- [:MEMORY] - (asset:Asset { uuid: data.uuid }) " +
+    //     "SET asset.originalfilename = data.originalfilename ")
     stmt, err := conn.PrepareNeo(
         "MATCH (:User { id: {id} }) <- [:MEMORY] - (asset:Asset { uuid: {assetid} }) " +
         "SET asset.originalfilename = {originalfilename} ")
@@ -512,18 +517,21 @@ func (neo *Neo4j) SetAssetOriginalFilename(id string, assetid string, originalfi
     }
     defer stmt.Close() // closing the statment will also close the rows
 
-    // executing a statement just returns summary information
-    result, err := stmt.ExecNeo(map[string] interface{} {
-        "id": id,
-        "assetid": assetid,
-        "originalfilename": originalfilename,
-    })
-    if err != nil {
-        return err
+    // have to use loop as the unofficial neo4j go driver cannot encode lists/maps
+    for assetid, originalfilename := range data {
+        result, err := stmt.ExecNeo(map[string] interface{} {   // executing a statement just returns summary information
+            "id": id,
+            "assetid": assetid,
+            "originalfilename": originalfilename,
+        })
+        if err != nil {
+            return err
+        }
+        _, err = result.RowsAffected(); if err != nil {
+            return err
+        }
     }
-
-    _, err = result.RowsAffected()
-    return err
+    return nil
 }
 
 func (neo *Neo4j) LeaveGroup(ownerid string, groupid string) error {

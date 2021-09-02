@@ -998,12 +998,14 @@ func putAssetOriginalFilename(response http.ResponseWriter, request *http.Reques
         return
     }
 
-    err := neoDB.SetAssetOriginalFilename(token.UID, assetID, payload.Originalfilename)
-    if err == nil {
-        response.WriteHeader(http.StatusOK)
-    } else {
+    var data = map[string]string {
+        assetID: payload.Originalfilename,
+    }
+    if err := neoDB.SetAssetsOriginalFilenames(token.UID, data); err != nil {
         response.WriteHeader(http.StatusInternalServerError)
         errLogger.Println(err.Error())
+    } else {
+        response.WriteHeader(http.StatusOK)
     }
 }
 
@@ -1030,19 +1032,11 @@ func patchAssetsOriginalFilenames(response http.ResponseWriter, request *http.Re
         return
     }
 
-    var err error
-    for assetID, originalfilename := range payload {
-        err = neoDB.SetAssetOriginalFilename(token.UID, assetID, originalfilename)
-        if err != nil {
-            break
-        }
-    }
-
-    if err == nil {
-        response.WriteHeader(http.StatusOK)
-    } else {
+    if err := neoDB.SetAssetsOriginalFilenames(token.UID, payload); err != nil {
         response.WriteHeader(http.StatusInternalServerError)
         errLogger.Println(err.Error())
+    } else {
+        response.WriteHeader(http.StatusOK)
     }
 }
 
